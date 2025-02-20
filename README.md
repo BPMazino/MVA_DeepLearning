@@ -6,7 +6,7 @@
 
 
 This project is organized into several key components, each handling a specific part of the YOLOv1 pipeline for object detection. The architecture follows the structure of a typical deep learning object detection project, but with additional modularity and clarity. Here’s an overview of the folder structure:
-
+```
 project/
 │
 ├── dataset.py       # Contains the custom Dataset class for loading and preprocessing data
@@ -14,6 +14,7 @@ project/
 ├── loss.py          # Implements the YOLOv1 loss function
 ├── train.py         # Main training script
 └── utils.py         # Helper functions for operations like NMS, mAP calculation, and more
+```
 
 1. dataset.py
 
