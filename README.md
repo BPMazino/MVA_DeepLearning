@@ -1,6 +1,11 @@
 
 # Implementation of YOLOv1 and comparaison between models
 
+Our poster:
+
+![image](./Poster_YoloV1.png)
+
+
 
 ## YOLOv1 Implementation Folder Architecture & Key Differences
 
