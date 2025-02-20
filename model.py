@@ -1,97 +1,179 @@
-import torch 
+"""
+Implementation of the YOLOv1 architecture with Batch Normalization.
+"""
+
+import torch
 import torch.nn as nn
+from typing import List, Union, Tuple
 
-class ConvBlock(nn.Module):
+# Define a type alias for an item in the architecture configuration.
+ArchitectureItem = Union[Tuple[int, int, int, int], str, list]
+
+# -----------------------------------------------------------------------------
+# Architecture Configuration
+# -----------------------------------------------------------------------------
+# Each tuple represents a convolutional layer configuration:
+#   (kernel_size, number_of_filters, stride, padding)
+#
+# The string "M" indicates a max-pooling layer with kernel size 2x2 and stride 2x2.
+#
+# A list represents a sequence of layers to be repeated. It contains two tuples
+# (each with the convolution parameters) followed by the number of repeats.
+architecture_config: List[ArchitectureItem] = [
+    (7, 64, 2, 3),
+    "M",
+    (3, 192, 1, 1),
+    "M",
+    (1, 128, 1, 0),
+    (3, 256, 1, 1),
+    (1, 256, 1, 0),
+    (3, 512, 1, 1),
+    "M",
+    [(1, 256, 1, 0), (3, 512, 1, 1), 4],
+    (1, 512, 1, 0),
+    (3, 1024, 1, 1),
+    "M",
+    [(1, 512, 1, 0), (3, 1024, 1, 1), 2],
+    (3, 1024, 1, 1),
+    (3, 1024, 2, 1),
+    (3, 1024, 1, 1),
+    (3, 1024, 1, 1),
+]
+
+# -----------------------------------------------------------------------------
+# CNN Block Definition
+# -----------------------------------------------------------------------------
+class CNNBlock(nn.Module):
     """
-    A modular CNN  block:
-    Conv2d -> LeakyReLU -> MaxPool2d
-    (No BatchNorm2d is used because it is not used in the original paper of YOLOv1 but it is used in YOLOv2)
+    A convolutional block that performs convolution followed by batch normalization
+    and LeakyReLU activation.
     """
-    def __init__(self, in_channels, out_channels, kernel_size, stride = 1, padding = 0, use_pool = False):
-        super(ConvBlock, self).__init__()
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size, stride, padding)
+    def __init__(self, in_channels: int, out_channels: int, **conv_kwargs) -> None:
+        """
+        Parameters:
+            in_channels (int): Number of input channels.
+            out_channels (int): Number of output channels.
+            **conv_kwargs: Additional keyword arguments for nn.Conv2d (e.g., kernel_size, stride, padding).
+        """
+        super(CNNBlock, self).__init__()
+        self.conv = nn.Conv2d(in_channels, out_channels, bias=False, **conv_kwargs)
+        self.batchnorm = nn.BatchNorm2d(out_channels)
         self.activation = nn.LeakyReLU(0.1)
-        self.pool = nn.MaxPool2d(kernel_size=2, stride=2) if use_pool else None
 
-    def forward(self, x):
-        x = self.conv(x)
-        x = self.activation(x)
-        if self.pool:
-            x = self.pool(x)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.activation(self.batchnorm(self.conv(x)))
+
+# -----------------------------------------------------------------------------
+# YOLOv1 Model Definition
+# -----------------------------------------------------------------------------
+class Yolov1(nn.Module):
+    """
+    Implementation of the YOLOv1 model.
+    """
+    def __init__(self, in_channels: int = 3, split_size: int = 7, num_boxes: int = 2, num_classes: int = 20) -> None:
+        """
+        Parameters:
+            in_channels (int): Number of input channels (default is 3 for RGB images).
+            split_size (int): Grid size (S) to divide the image.
+            num_boxes (int): Number of bounding boxes per grid cell.
+            num_classes (int): Number of classes for detection.
+        """
+        super(Yolov1, self).__init__()
+        self.in_channels = in_channels
+        self.architecture = architecture_config
+
+        # Feature extractor (Darknet)
+        self.darknet = self._create_conv_layers(self.architecture)
+        # Fully connected layers (head)
+        self.fcs = self._create_fcs(split_size, num_boxes, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass of the network.
+        
+        Parameters:
+            x (torch.Tensor): Input image tensor.
+            
+        Returns:
+            torch.Tensor: Output predictions.
+        """
+        x = self.darknet(x)
+        x = self.fcs(x)
         return x
-    
 
-class YOLOv1(nn.Module):
-    """
-    YOLOv1 model
-    
-    Parameters:
-    S: int, number of grid cells in each dimension
-    B: int, number of bounding boxes predicted by each grid cell
-    C: int, number of classes
-    """
-    
-    def __init__(self, S=7, B=2, C=20):
-        super(YOLOv1, self).__init__()
-        self.S = S
-        self.B = B
-        self.C = C
-        self.conv_layers = self._build_conv_layers()
-        self.fc_layers = self._build_fc_layers()
+    def _create_conv_layers(self, architecture: List[ArchitectureItem]) -> nn.Sequential:
+        """
+        Creates the convolutional layers based on the architecture configuration.
         
-    def _build_conv_layers(self):
-        return nn.Sequential(
-            # First layer
-            ConvBlock(3, 64, kernel_size=7, stride=2, padding=3, use_pool=True),
+        Parameters:
+            architecture (List[ArchitectureItem]): List defining the layer configuration.
             
-            # Second layer
-            ConvBlock(64, 192, kernel_size=3, padding=1, use_pool=True),
-            
-            # Third layer
-            ConvBlock(192, 128, kernel_size=1),
-            ConvBlock(128, 256, kernel_size=3, padding=1),
-            ConvBlock(256, 256, kernel_size=1),
-            ConvBlock(256, 512, kernel_size=3, padding=1, use_pool=True),
-            
-            # Fourth layer (4 repetitions)
-            ConvBlock(512, 256, kernel_size=1),
-            ConvBlock(256, 512, kernel_size=3, padding=1),
-            ConvBlock(512, 256, kernel_size=1),
-            ConvBlock(256, 512, kernel_size=3, padding=1),
-            ConvBlock(512, 256, kernel_size=1),
-            ConvBlock(256, 512, kernel_size=3, padding=1),
-            ConvBlock(512, 1024, kernel_size=3, padding=1, use_pool=True),
-            
-            # Fifth layer (2 repetitions)
-            ConvBlock(1024, 512, kernel_size=1),
-            ConvBlock(512, 1024, kernel_size=3, padding=1),
-            ConvBlock(1024, 512, kernel_size=1),
-            ConvBlock(512, 1024, kernel_size=3, padding=1),
-            
-            # Final layers
-            ConvBlock(1024, 1024, kernel_size=3, padding=1),
-            ConvBlock(1024, 1024, kernel_size=3, stride=2, padding=1),  # Downsample to 7x7
-            ConvBlock(1024, 1024, kernel_size=3, padding=1),
-            ConvBlock(1024, 1024, kernel_size=3, padding=1)
-        )
+        Returns:
+            nn.Sequential: A sequential container of convolutional layers.
+        """
+        layers = []
+        in_channels = self.in_channels
 
+        for layer in architecture:
+            if isinstance(layer, tuple):
+                kernel_size, filters, stride, padding = layer
+                layers.append(
+                    CNNBlock(in_channels, filters, kernel_size=kernel_size, stride=stride, padding=padding)
+                )
+                in_channels = filters
+
+            elif isinstance(layer, str) and layer == "M":
+                layers.append(nn.MaxPool2d(kernel_size=2, stride=2))
+
+            elif isinstance(layer, list):
+                conv1, conv2, num_repeats = layer
+                for _ in range(num_repeats):
+                    # First convolutional block in the repeated sequence.
+                    k1, f1, s1, p1 = conv1
+                    layers.append(
+                        CNNBlock(in_channels, f1, kernel_size=k1, stride=s1, padding=p1)
+                    )
+                    # Second convolutional block in the repeated sequence.
+                    k2, f2, s2, p2 = conv2
+                    layers.append(
+                        CNNBlock(f1, f2, kernel_size=k2, stride=s2, padding=p2)
+                    )
+                    in_channels = f2
+
+        return nn.Sequential(*layers)
+
+    def _create_fcs(self, split_size: int, num_boxes: int, num_classes: int) -> nn.Sequential:
+        """
+        Creates the fully connected layers.
         
-    def _build_fc_layers(self):
-        input_size = 1024 * self.S * self.S
+        Parameters:
+            split_size (int): Grid size (S).
+            num_boxes (int): Number of bounding boxes per grid cell.
+            num_classes (int): Number of classes.
+            
+        Returns:
+            nn.Sequential: A sequential container of fully connected layers.
+        """
+        S, B, C = split_size, num_boxes, num_classes
+        # In the original YOLO paper, the first FC layer maps from 1024*S*S to 4096, 
+        # followed by a LeakyReLU, and then to S*S*(B*5+C).
+        # Here, we use an intermediate dimension of 496 as a slight modification.
         return nn.Sequential(
             nn.Flatten(),
-            nn.Linear(input_size, 4096), # 7*7*1024 is the shape of the output of the last ConvBlock
+            nn.Linear(1024 * S * S, 496),
+            nn.Dropout(0.0),
             nn.LeakyReLU(0.1),
-            nn.Dropout(0.5),
-            nn.Linear(4096, self.S * self.S * (self.C + self.B * 5)), # 7*7*(20+2*5) = 1470
+            nn.Linear(496, S * S * (C + B * 5))
         )
-        
-    def forward(self, x):
-        x = self.conv_layers(x)
-        print(f"Shape after conv layers: {x.shape}")
-        x = self.fc_layers(x)
-        x =x.view(-1, self.S, self.S, self.C + self.B*5)
-        return x
-        
 
-        
+# ---------------------------------- Testing ----------------------------------
+
+def test():
+    model = Yolov1(split_size=7, num_boxes=2, num_classes=20)
+    x = torch.randn((2, 3, 448, 448))
+    out = model(x)
+    print("Output shape:", out.shape)  
+    # Should be [2, 1470] when S=7, B=2, C=20
+
+if __name__ == "__main__":
+    test()
